@@ -1,8 +1,8 @@
 package br.frateu.leitor_placa_java;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import javax.swing.JFileChooser;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -18,19 +18,17 @@ import net.sourceforge.tess4j.TesseractException;
 
 public class Main {
 	public static void main(String[] args) {
-		// Definindo o caminho da imagem alterada
-		String caminhoImagemAlterada = "D:\\Projects\\leitor-placa-java\\temp-files\\placa.png";
+		String placaFinal  = "";
 
-		// Definindo os dois padrões de placa de carro do Brasil
-		Pattern padraoPlacaBrasil = Pattern.compile("[A-Z]{3}-\\d{4}|" + "[A-Z]{3}-\\d[A-Z]\\d{2}|" + "[A-Z]{3}.\\d{4}|"
-				+ "[A-Z]{3}.\\d[A-Z]\\d{2}|" + "[A-Z]{3}:\\d{4}|" + "[A-Z]{3}:\\d[A-Z]\\d{2}|" + "[A-Z]{3}\\d{4}|"
-				+ "[A-Z]{3}\\d[A-Z]\\d{2}");
+		HashMap<String, Integer> padroesPlacasEncontradas = new HashMap<String, Integer>();
+
+		double variacaoGama = -50;
 
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
 
 		// Configuração do Tesseract OCR
 		Tesseract tesseract = new Tesseract();
-		tesseract.setDatapath("C:\\Program Files\\Tesseract-OCR\\tessdata");
+		tesseract.setDatapath(Constantes.caminhoTesseract);
 
 		// Criando um seletor de arquivo
 		JFileChooser seletorArquivoPlaca = new JFileChooser();
@@ -54,40 +52,70 @@ public class Main {
 				Mat imagemPlacaCinza = new Mat();
 
 				Imgproc.cvtColor(placaMat, imagemPlacaCinza, Imgproc.COLOR_BGR2GRAY);
+				
+				while (variacaoGama < 50) {
+					// Converter a imagem para o tipo de dados de ponto flutuante
+					Mat floatImage = new Mat();
+					imagemPlacaCinza.convertTo(floatImage, CvType.CV_32F, 1.0 / 255.0);
 
-				// Converter a imagem para o tipo de dados de ponto flutuante
-				Mat floatImage = new Mat();
-				imagemPlacaCinza.convertTo(floatImage, CvType.CV_32F, 1.0 / 255.0);
+					// Alterando a imagem para obter o contraste necessario para identificar
+					Mat adjustedImage = new Mat();
+					Core.pow(floatImage, variacaoGama, adjustedImage);
 
-				// Alterando a imagem para obter o contraste necessario para identificar
-				Mat adjustedImage = new Mat();
-				Core.pow(floatImage, -8.5, adjustedImage);
+					// Converter a imagem ajustada de volta para o tipo de dados de 8 bits
+					Mat finalImage = new Mat();
+					adjustedImage.convertTo(finalImage, CvType.CV_8U, 255.0);
 
-				// Converter a imagem ajustada de volta para o tipo de dados de 8 bits
-				Mat finalImage = new Mat();
-				adjustedImage.convertTo(finalImage, CvType.CV_8U, 255.0);
+					// Salvar a imagem alterada
+					Imgcodecs.imwrite(Constantes.caminhoImagemAlterada, finalImage);
 
-				// Salvar a imagem alterada
-				Imgcodecs.imwrite(caminhoImagemAlterada, finalImage);
+					// Pegando o arquivo da placa alterada
+					File arquivoPlaca = new File(Constantes.caminhoImagemAlterada);
 
-				// Pegando o arquivo da placa alterada
-				File arquivoPlaca = new File(caminhoImagemAlterada);
+					String placaOCR = tesseract.doOCR(arquivoPlaca);
 
-				String placaOCR = tesseract.doOCR(arquivoPlaca);
+					placaOCR = placaOCR.replace(" ", "");
 
-				placaOCR = placaOCR.replace(" ", "");
+					//System.out.println("Resultado sem filtro: " + placaOCR);
 
-				System.out.println("Resultado sem filtro: " + placaOCR);
+					Matcher resultadosPadraoPlaca = Constantes.padraoPlacaBrasil.matcher(placaOCR);
 
-				Matcher resultadosPadraoPlaca = padraoPlacaBrasil.matcher(placaOCR);
+					// Rodando entre todos os resultados encontrados
+					while (resultadosPadraoPlaca.find()) {
+						String padraoPlaca = resultadosPadraoPlaca.group();
 
-				// Rodando entre todos os resultados encontrados
-				while (resultadosPadraoPlaca.find()) {
-					String padraoPlaca = resultadosPadraoPlaca.group();
-					
-					padraoPlaca = padraoPlaca.replace(":", "-").replace(".", "-");
+						padraoPlaca = padraoPlaca.replace(":", "-").replace(".", "-");
 
-					System.out.println("Placa encontrada: " + padraoPlaca);
+						if (padroesPlacasEncontradas.containsKey(padraoPlaca)) {
+							Integer quantidadeEncontrada = padroesPlacasEncontradas.get(padraoPlaca);
+
+							quantidadeEncontrada = quantidadeEncontrada + 1;
+
+							padroesPlacasEncontradas.replace(padraoPlaca, padroesPlacasEncontradas.get(padraoPlaca), quantidadeEncontrada);
+						} else {
+							padroesPlacasEncontradas.put(padraoPlaca, 1);
+						}
+
+						//System.out.println("Teste: " + padraoPlaca);
+					}
+
+					variacaoGama = variacaoGama + 0.5;
+				}
+
+				if (padroesPlacasEncontradas.isEmpty()) {
+					System.out.println("Placa não encontrada!");
+				} else {
+					Integer quantidadeComparacao = 0;
+
+					for (String placa : padroesPlacasEncontradas.keySet()) {
+						if (padroesPlacasEncontradas.get(placa) > quantidadeComparacao) {
+							placaFinal = placa;
+
+							quantidadeComparacao = padroesPlacasEncontradas.get(placa);
+						}
+					}
+
+					System.out.println("Placa encontrada: " + placaFinal);
 				}
 			} catch (TesseractException e) {
 				System.err.println(e.getMessage());
